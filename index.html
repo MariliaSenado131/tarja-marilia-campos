@@ -135,10 +135,15 @@
     text-align:center;
     background:#fff;
     cursor:pointer;
-    transition:border-color .15s ease, background .15s ease;
+    transition:border-color .15s ease, background .15s ease, padding .15s ease;
     display:block;
   }
   .dropzone.drag{ border-color:var(--green); background:var(--green-soft); }
+  .dropzone.has-image{
+    border-style:solid;
+    border-color:var(--green);
+    padding:14px;
+  }
   .dropzone .icon{
     width:52px;
     height:52px;
@@ -189,18 +194,9 @@
   }
   .btn-ghost:hover{ background:var(--green); color:var(--ink); }
 
-  .preview-title{
-    margin:34px 0 14px;
-    text-align:center;
-    font-weight:700;
-    font-size:14px;
-    letter-spacing:.06em;
-    text-transform:uppercase;
-    color:var(--ink-soft);
-  }
   .canvas-wrap{
     background:repeating-conic-gradient(#f2f2f2 0% 25%, #ffffff 0% 50%) 50% / 20px 20px;
-    border-radius:20px;
+    border-radius:14px;
     overflow:hidden;
     aspect-ratio:1/1;
     max-width:440px;
@@ -208,16 +204,8 @@
     display:flex;
     align-items:center;
     justify-content:center;
-    border:3px solid var(--green-soft);
   }
   .canvas-wrap canvas{ width:100%; height:100%; display:block; }
-  .canvas-wrap .placeholder{
-    text-align:center;
-    color:#c9bccb;
-    font-size:14px;
-    padding:20px;
-    font-weight:600;
-  }
 
   /* ---------- COMO FUNCIONA ---------- */
   .steps{
@@ -317,23 +305,22 @@
       <p class="help">Escolha uma foto sua (JPEG ou PNG). Ela é processada aqui mesmo, no seu navegador — nada é enviado para nenhum servidor.</p>
 
       <label class="dropzone" id="dropzone" for="fileInput">
-        <span class="icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
-        </span>
-        <strong>Clique ou arraste sua foto aqui</strong>
-        <span>JPEG ou PNG — recomendado: foto de rosto, formato quadrado ou retrato</span>
+        <div class="dz-prompt" id="dzPrompt">
+          <span class="icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          </span>
+          <strong>Clique ou arraste sua foto aqui</strong>
+          <span>JPEG ou PNG — recomendado: foto de rosto, formato quadrado ou retrato</span>
+        </div>
+        <div class="canvas-wrap" id="canvasWrap" style="display:none;">
+          <canvas id="canvas" width="1080" height="1080"></canvas>
+        </div>
       </label>
       <input type="file" id="fileInput" accept="image/jpeg, image/png">
 
       <div class="actions">
         <button class="btn btn-primary" id="downloadBtn" disabled>⬇ Baixar minha tarja</button>
         <button class="btn btn-ghost" id="resetBtn">Trocar foto</button>
-      </div>
-
-      <div class="preview-title">Prévia</div>
-      <div class="canvas-wrap" id="canvasWrap">
-        <div class="placeholder" id="placeholder">Sua foto com a tarja<br>vai aparecer aqui</div>
-        <canvas id="canvas" width="1080" height="1080" style="display:none;"></canvas>
       </div>
     </div>
   </div>
@@ -354,8 +341,9 @@
   const SIZE = 1080;
   const fileInput = document.getElementById('fileInput');
   const dropzone = document.getElementById('dropzone');
+  const dzPrompt = document.getElementById('dzPrompt');
+  const canvasWrap = document.getElementById('canvasWrap');
   const canvas = document.getElementById('canvas');
-  const placeholder = document.getElementById('placeholder');
   const downloadBtn = document.getElementById('downloadBtn');
   const resetBtn = document.getElementById('resetBtn');
   const ctx = canvas.getContext('2d');
@@ -488,8 +476,9 @@
 
     ctx.restore();
 
-    canvas.style.display = 'block';
-    placeholder.style.display = 'none';
+    dzPrompt.style.display = 'none';
+    canvasWrap.style.display = 'flex';
+    dropzone.classList.add('has-image');
     downloadBtn.disabled = false;
   }
 
@@ -535,19 +524,83 @@
     if (file) loadFile(file);
   });
 
-  downloadBtn.addEventListener('click', function(){
+  function isIOS(){
+    return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  }
+
+  // No iPhone o botão precisa deixar claro que a ação é "compartilhar/salvar",
+  // já que não existe download direto para a galeria de Fotos no Safari.
+  if (isIOS()){
+    downloadBtn.innerHTML = '📤 Salvar minha tarja';
+  }
+
+  function dataURLToBlob(dataUrl){
+    const parts = dataUrl.split(',');
+    const mime = parts[0].match(/:(.*?);/)[1];
+    const binary = atob(parts[1]);
+    const arr = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++){ arr[i] = binary.charCodeAt(i); }
+    return new Blob([arr], { type: mime });
+  }
+
+  downloadBtn.addEventListener('click', async function(){
     if (!currentImg) return;
+    const fileName = 'tarja-marilia-campos-131.png';
+
+    // toDataURL é síncrono — gera a imagem sem sair do "gesto do usuário"
+    // (clique), o que é essencial para o Safari permitir o navigator.share
+    // logo em seguida. Se gerarmos o blob de forma assíncrona antes,
+    // o iOS pode recusar o compartilhamento por perder esse contexto.
+    const dataUrl = canvas.toDataURL('image/png');
+    const blob = dataURLToBlob(dataUrl);
+
+    // 1) Web Share API com arquivo: no celular abre o menu nativo de
+    //    compartilhar, com "Salvar Imagem" indo direto para a galeria.
+    //    É o caminho mais confiável que existe hoje em navegadores para
+    //    salvar na galeria de Fotos do iPhone.
+    if (navigator.canShare && typeof File !== 'undefined'){
+      try{
+        const file = new File([blob], fileName, { type: 'image/png' });
+        if (navigator.canShare({ files: [file] })){
+          await navigator.share({
+            files: [file],
+            title: 'Minha tarja — Marília Campos 131'
+          });
+          return;
+        }
+      } catch(err){
+        // pessoa cancelou o compartilhamento ou o navegador recusou;
+        // seguimos para o fallback abaixo.
+      }
+    }
+
+    const blobUrl = URL.createObjectURL(blob);
+
+    // 2) iOS Safari não baixa arquivos via atributo "download" — abrir
+    //    a imagem numa nova aba permite tocar e segurar para salvar
+    //    em Fotos.
+    if (isIOS()){
+      window.open(blobUrl, '_blank');
+      setTimeout(function(){ URL.revokeObjectURL(blobUrl); }, 15000);
+      return;
+    }
+
+    // 3) Download padrão (funciona bem em desktop e Android/Chrome).
     const link = document.createElement('a');
-    link.download = 'tarja-marilia-campos-131.png';
-    link.href = canvas.toDataURL('image/png');
+    link.href = blobUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
+    setTimeout(function(){ URL.revokeObjectURL(blobUrl); }, 4000);
   });
 
   resetBtn.addEventListener('click', function(){
     currentImg = null;
     fileInput.value = '';
-    canvas.style.display = 'none';
-    placeholder.style.display = 'block';
+    canvasWrap.style.display = 'none';
+    dzPrompt.style.display = 'block';
+    dropzone.classList.remove('has-image');
     downloadBtn.disabled = true;
   });
 })();
